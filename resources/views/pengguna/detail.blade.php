@@ -12,7 +12,7 @@
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-10 items-start">
-        
+
         <div class="sticky top-6">
             <div class="h-[380px] rounded-2xl overflow-hidden relative shadow-sm border border-gray-100 mb-4 group bg-gray-50">
                 @if($spot->foto)
@@ -22,7 +22,7 @@
                         <span class="text-white/60 font-semibold tracking-widest text-sm uppercase">Foto Belum Tersedia</span>
                     </div>
                 @endif
-                
+
                 <div class="absolute top-4 right-4 z-10">
                     @php
                         $badgeColor = match($spot->status_ketersediaan) {
@@ -72,7 +72,7 @@
             @if($spot->status_ketersediaan === 'tersedia')
                 <div class="bg-[#f8fbf9] border border-[#d1e5dc] rounded-2xl p-6 relative overflow-hidden">
                     <div class="absolute -right-6 -top-6 text-9xl opacity-5">🌿</div>
-                    
+
                     <div class="flex items-center gap-2 mb-6 text-[14px] font-bold text-primary relative z-10">
                         <span>📅</span> Form Reservasi Fasilitas
                     </div>
@@ -84,23 +84,33 @@
                             </ul>
                         </div>
                     @endif
-                    
-                   <form action="{{ route('pengguna.katalog.store') }}" method="POST" class="relative z-10">
+
+                    <form action="{{ route('pengguna.katalog.store') }}" method="POST" class="relative z-10">
                         @csrf
                         <input type="hidden" name="spot_id" value="{{ $spot->id }}">
-                        
+
                         <div class="mb-5 bg-emerald-50/50 border border-emerald-100 rounded-xl p-4 flex justify-between items-center">
                             <span class="text-[12px] font-bold text-emerald-800">Total Harga (Paket 2 Hari)</span>
-                            <span class="text-lg font-black text-emerald-700">Rp {{ number_format($spot->harga, 0, ',', '.') }}</span>
+                            <span class="text-lg font-black text-emerald-700">Rp {{ number_format($spot->harga ?? 0, 0, ',', '.') }}</span>
                         </div>
 
-                        <div class="mb-8">
-                            <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Pilih Tanggal Penjemuran</label>
-                            <input type="text" id="waktu_mulai" name="waktu_mulai" required placeholder="Klik untuk melihat tanggal tersedia..." class="w-full border-gray-300 rounded-xl py-3 px-4 text-[13px] font-bold text-gray-700 focus:border-primary focus:ring-primary cursor-pointer bg-white shadow-sm transition-all hover:border-primary">
+                        <div class="space-y-5 mb-8">
+                            <div>
+                                <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Pilih Tanggal Mulai</label>
+                                <input type="text" id="waktu_mulai" name="waktu_mulai" required placeholder="Klik untuk melihat tanggal tersedia..." class="w-full border-gray-300 rounded-xl py-3 px-4 text-[13px] font-bold text-gray-700 focus:border-primary focus:ring-primary cursor-pointer bg-white shadow-sm transition-all hover:border-primary">
+                            </div>
+
+                            <div>
+                                <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Jadwal Angkat (Otomatis + Jam Realtime)</label>
+                                <div class="relative">
+                                    <input type="text" id="waktu_selesai" name="waktu_selesai" readonly placeholder="Akan terisi otomatis setelah pilih tanggal..." class="w-full border-gray-200 rounded-xl py-3 px-4 text-[13px] font-bold bg-gray-100 text-gray-400 cursor-not-allowed select-none">
+                                    <div class="absolute right-4 top-3 text-gray-400">🔒</div>
+                                </div>
+                            </div>
                         </div>
 
                         <button type="submit" class="w-full bg-primary hover:bg-[#094839] text-white font-bold py-4 rounded-xl shadow-md hover:shadow-lg transition-all text-[14px] tracking-wide flex justify-center items-center gap-2">
-                            Pesan Sekarang <span>→</span>
+                            Lanjutkan ke Pembayaran <span>→</span>
                         </button>
                     </form>
                 </div>
@@ -115,7 +125,6 @@
                     </p>
                 </div>
             @endif
-
         </div>
     </div>
 </div>
@@ -125,31 +134,32 @@
     document.addEventListener('DOMContentLoaded', function() {
         const bookedDates = @json($bookedDates ?? []);
         const dateInput = document.getElementById("waktu_mulai");
-        
+
         if (dateInput) {
             flatpickr(dateInput, {
-                // Hapus pengaturan enableTime agar menu jam menghilang
-                minDate: "today", 
-                disable: bookedDates, 
-                dateFormat: "Y-m-d", // Hanya menampilkan tanggal
-                
+                minDate: "today",
+                disable: bookedDates,
+                dateFormat: "Y-m-d", // Menginput tanggal bersih
                 onChange: function(selectedDates, dateStr, instance) {
                     if (selectedDates.length > 0) {
-                        // Ambil jam & menit waktu nyata (real-time) saat ini
+                        // Ambil jam & menit waktu nyata (real-time WIB) saat ini
                         let now = new Date();
                         let hours = String(now.getHours()).padStart(2, '0');
                         let minutes = String(now.getMinutes()).padStart(2, '0');
-                        
+
+                        // Pasang teks jam real-time ke input mulai secara paksa agar terbaca user
+                        instance.input.value = `${dateStr} ${hours}:${minutes}`;
+
                         // Hitung tanggal selesai (+2 hari)
                         let endDate = new Date(selectedDates[0]);
                         endDate.setDate(endDate.getDate() + 2);
-                        
+
                         let endYear = endDate.getFullYear();
                         let endMonth = String(endDate.getMonth() + 1).padStart(2, '0');
                         let endDay = String(endDate.getDate()).padStart(2, '0');
-                        
-                        // Tampilkan tanggal selesai lengkap dengan jam otomatisnya di kotak abu-abu
-                        document.getElementById('waktu_selesai').value = `${endYear}-${endMonth}-${endDay} ${hours}:${minutes}`;
+
+                        // Cetak tanggal selesai lengkap dengan jam otomatisnya
+                        document.getElementById('waktu_selesai').value = `${endYear}-${endMonth}-${endDay} ${hours}:${minutes} WIB`;
                     } else {
                         document.getElementById('waktu_selesai').value = '';
                     }

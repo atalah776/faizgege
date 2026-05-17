@@ -10,7 +10,7 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        // Membuat akun Admin
+        // 1. Membuat akun Admin
         User::create([
             'name' => 'Admin Jemuran',
             'email' => 'admin@jemuranku.com',
@@ -18,12 +18,17 @@ class DatabaseSeeder extends Seeder
             'role' => 'admin',
         ]);
 
-        // Membuat akun Pengguna
+        // 2. Membuat akun Pengguna
         User::create([
             'name' => 'Mahasiswa Kos',
             'email' => 'pengguna@jemuranku.com',
             'password' => Hash::make('password123'), // Password default
             'role' => 'pengguna',
+        ]);
+
+        // 3. Memanggil Seeder Rak Jemuran yang berisi 5 data master
+        $this->call([
+            SpotSeeder::class,
         ]);
     }
 }

@@ -9,20 +9,22 @@ use Carbon\Carbon; // Import Carbon untuk manipulasi tanggal dan waktu
 
 class PenggunaController extends Controller
 {
+    // MENAMPILKAN DASHBOARD UTAMA KATALOG
     public function index()
     {
         $spots = Spot::all();
         return view('pengguna.dashboard', compact('spots'));
     }
 
+    // MENAMPILKAN DETAIL RAK & KALENDER PINTAR
     public function show($id)
     {
         $spot = Spot::findOrFail($id);
 
-        // TARIK DATA JADWAL YANG SUDAH TERBOOKING (Aktif/Menunggu)
-        // Format diubah ke bentuk array 'from' & 'to' agar langsung dibaca Flatpickr Kalender
+        // MEKANISME BARU: Hanya booking dengan status 'aktif' (Sudah di-ACC Admin)
+        // yang akan memblokir tanggal di kalender pelanggan lain.
         $bookedDates = Booking::where('spot_id', $id)
-            ->whereIn('status_booking', ['menunggu', 'aktif'])
+            ->where('status_booking', 'aktif')
             ->get(['waktu_mulai', 'waktu_selesai'])
             ->map(function ($booking) {
                 return [
@@ -34,26 +36,26 @@ class PenggunaController extends Controller
         return view('pengguna.detail', compact('spot', 'bookedDates'));
     }
 
-    // FUNGSI BOOKING AWAL (Mengunci Jam Server Secara Real-Time)
+    // MEMPROSES RESERVASI AWAL (Mengunci Jam Server Secara Real-Time WIB)
     public function store(Request $request)
     {
         $request->validate([
             'spot_id' => 'required|exists:spots,id',
-            'waktu_mulai' => 'required|date', // Validasi date standar
+            'waktu_mulai' => 'required', // Menerima input tanggal bersih dari Flatpickr
         ]);
 
-        // 1. Ambil tanggal saja dari inputan Flatpickr (Format: Y-m-d)
-        $tanggal_dipilih = \Carbon\Carbon::parse($request->waktu_mulai)->format('Y-m-d');
-        
-        // 2. GABUNGKAN tanggal tersebut dengan JAM, MENIT, dan DETIK saat ini juga (Real-time Server)
-        $waktu_mulai = \Carbon\Carbon::parse($tanggal_dipilih . ' ' . now()->format('H:i:s')); 
-        
-        // 3. Waktu selesai otomatis bertambah 2 hari persis (mengunci jam yang sama)
+        // 1. Ambil tanggal saja dari inputan form (Format: Y-m-d)
+        $tanggal_dipilih = Carbon::parse($request->waktu_mulai)->format('Y-m-d');
+
+        // 2. GABUNGKAN tanggal tersebut dengan JAM, MENIT, dan DETIK saat ini (Real-time Server WIB)
+        $waktu_mulai = Carbon::parse($tanggal_dipilih . ' ' . now()->format('H:i:s'));
+
+        // 3. Waktu selesai otomatis bertambah 2 hari persis di jam yang sama
         $waktu_selesai = $waktu_mulai->copy()->addDays(2);
 
-        // 4. CEK BENTROK JADWAL (Proteksi Ganda)
+        // 4. CEK BENTROK JADWAL (Hanya divalidasi silang dengan pesanan yang berstatus 'aktif')
         $isConflict = Booking::where('spot_id', $request->spot_id)
-            ->whereIn('status_booking', ['menunggu', 'aktif'])
+            ->where('status_booking', 'aktif')
             ->where(function ($query) use ($waktu_mulai, $waktu_selesai) {
                 $query->whereBetween('waktu_mulai', [$waktu_mulai, $waktu_selesai])
                       ->orWhereBetween('waktu_selesai', [$waktu_mulai, $waktu_selesai])
@@ -64,22 +66,22 @@ class PenggunaController extends Controller
             })->exists();
 
         if ($isConflict) {
-            return back()->withErrors(['waktu_mulai' => 'Maaf, slot waktu pada tanggal tersebut sudah terisi. Silakan pilih tanggal lain!']);
+            return back()->withErrors(['waktu_mulai' => 'Maaf, slot waktu pada tanggal tersebut baru saja di-ACC untuk pelanggan lain. Silakan pilih tanggal senggang lainnya!']);
         }
 
-        // 5. Simpan ke Database
+        // 5. Simpan data reservasi dengan status default 'menunggu'
         $booking = Booking::create([
             'user_id' => auth()->id(),
             'spot_id' => $request->spot_id,
             'waktu_mulai' => $waktu_mulai,
             'waktu_selesai' => $waktu_selesai,
-            'status_booking' => 'menunggu', 
+            'status_booking' => 'menunggu',
         ]);
 
         return redirect()->route('pengguna.katalog.success', $booking->id);
     }
 
-    // FUNGSI BARU UNTUK UPLOAD BUKTI DARI HALAMAN TRANSAKSI
+    // PROSES UNTUK UPLOAD BUKTI TRANSFER DARI HALAMAN NOTA TRANSAKSI
     public function uploadBukti(Request $request, $id)
     {
         $booking = Booking::where('id', $id)->where('user_id', auth()->id())->firstOrFail();
@@ -89,23 +91,29 @@ class PenggunaController extends Controller
         ]);
 
         $file = $request->file('bukti_pembayaran');
-        $nama_file = time() . '_bayar_' . $file->getClientOriginalName();
-        $file->storeAs('pembayaran', $nama_file, 'public'); 
+
+        // 1. Ambil nama asli file
+        $nama_asli = $file->getClientOriginalName();
+        // 2. BERSIHKAN SPASI: Ubah semua spasi di nama file menjadi garis bawah (_)
+        $nama_bersih = str_replace(' ', '_', $nama_asli);
+        // 3. Gabungkan dengan waktu agar unik
+        $nama_file = time() . '_bayar_' . $nama_bersih;
+
+        $file->storeAs('pembayaran', $nama_file, 'public');
 
         $booking->update([
             'bukti_pembayaran' => $nama_file
         ]);
 
-        return back()->with('success', 'Bukti pembayaran berhasil diunggah! Harap tunggu verifikasi dari Admin.');
+        return back()->with('success', 'Bukti pembayaran berhasil diunggah! Harap tunggu verifikasi dan ACC dari Admin.');
     }
 
-    // FUNGSI UNTUK MENAMPILKAN TIKET
+    // MENAMPILKAN HALAMAN NOTA DETAIL TRANSAKSI / TIKET RESMI
     public function success($id)
     {
-        // Tarik data booking beserta relasi jemurannya
         $booking = Booking::with('spot')->findOrFail($id);
-        
-        // Keamanan: Pastikan tiket ini hanya bisa dilihat oleh si pemesan asli
+
+        // Proteksi Keamanan: Pastikan nota ini hanya bisa dilihat oleh si pemilik pesanan
         if ($booking->user_id !== auth()->id()) {
             abort(403, 'Akses ditolak.');
         }
@@ -113,40 +121,51 @@ class PenggunaController extends Controller
         return view('pengguna.success', compact('booking'));
     }
 
-    // FUNGSI UNTUK MENAMPILKAN RIWAYAT BOOKING PENGGUNA
+    // MENAMPILKAN TABEL RIWAYAT RESERVASI MILIK PENGGUNA YANG LOGIN
     public function history()
     {
-        // Tarik data booking yang HANYA milik user yang sedang login
         $riwayat = Booking::with('spot')
                     ->where('user_id', auth()->id())
                     ->latest()
                     ->get();
-                    
+
         return view('pengguna.history', compact('riwayat'));
     }
 
-    // FUNGSI UNTUK MENAMPILKAN HALAMAN PANDUAN
+    // MENAMPILKAN HALAMAN PANDUAN PENGGUNAAN SISTEM
     public function panduan()
     {
         return view('pengguna.panduan');
     }
 
+    // MEMBATALKAN / MENGHAPUS PESANAN YANG BELUM DI-ACC ADMIN
     public function cancel($id)
     {
-        // Cari booking milik user yang sedang login
         $booking = Booking::where('id', $id)
                           ->where('user_id', auth()->id())
                           ->firstOrFail();
 
-        // Keamanan: Hanya izinkan hapus jika statusnya masih 'menunggu'
-        // Jika sudah 'aktif' atau 'selesai', tidak boleh dihapus agar tidak merusak laporan finansial/admin
+        // Keamanan ketat: Hanya pesanan berstatus 'menunggu' yang boleh dibatalkan mandiri
         if ($booking->status_booking !== 'menunggu') {
             return back()->with('error', 'Hanya pesanan dengan status menunggu yang dapat dihapus.');
         }
 
-        // Hapus permanen dari database
         $booking->delete();
 
         return back()->with('success', 'Pesanan Anda telah berhasil dihapus permanen.');
+    }
+
+
+
+    public function cetakNota($id)
+    {
+        $booking = Booking::with('spot')->where('id', $id)->where('user_id', auth()->id())->firstOrFail();
+
+        // Proteksi: Hanya boleh cetak jika sudah di-ACC
+        if ($booking->status_booking !== 'aktif' && $booking->status_booking !== 'selesai') {
+            abort(403, 'Nota belum tersedia. Menunggu verifikasi Admin.');
+        }
+
+        return view('cetak-nota', compact('booking'));
     }
 }
